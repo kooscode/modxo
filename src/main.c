@@ -26,6 +26,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <oxos_debug.h>
 #include <stdio.h>
 #include <string.h>
 #include <pico/stdlib.h>
@@ -179,8 +180,9 @@ void register_handlers()
     modxo_register_handler(&uart_16550_hdlr);
     modxo_register_handler(&config_nvm_hdlr);
     modxo_register_handler(&ws2812_hdlr);
-    modxo_register_handler(&serirq_hdlr);
+    // modxo_register_handler(&serirq_hdlr); // OXOS: GPIO 28 (SERIRQ on the Tiny) drives the power button instead
     modxo_register_handler(&legacy_display_hdlr);
+    modxo_register_handler(&oxos_debug_hdlr);
 }
 
 #define RDID_BUF_SIZE 8

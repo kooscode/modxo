@@ -135,15 +135,48 @@ static void pio_custom_init(PIO pio, uint sm, uint offset, bool lframe_cancel)
     pio_sm_exec(pio, sm, pio_encode_jmp(offset));
 }
 
+volatile uint32_t lpc_cycle_count[4];
+volatile uint32_t lpc_last_address[4];
+volatile uint32_t lpc_trace_addr[48];
+volatile uint8_t lpc_trace_data[48];
+volatile uint32_t lpc_trace_n;
+// Memory cycles outside the flash window (0xFF000000-0xFFFFFFFF): a ring of address, data and direction.
+volatile uint32_t lpc_odd_addr[64];
+volatile uint8_t lpc_odd_data[64];
+volatile uint8_t lpc_odd_write[64];
+volatile uint32_t lpc_odd_n;
+// The last I/O writes (port << 8 | data), independent of the USB stream.
+volatile uint32_t lpc_iow_ring[16];
+volatile uint32_t lpc_iow_n;
+static inline void lpc_note_odd(uint32_t address, uint8_t data, uint8_t write)
+{
+    if (address >= 0xFF000000u)
+        return;
+    uint32_t i = lpc_odd_n % 64;
+    lpc_odd_addr[i] = address;
+    lpc_odd_data[i] = data;
+    lpc_odd_write[i] = write;
+    lpc_odd_n++;
+}
+
 static void lpc_read_handler(uint8_t sm)
 {
     register uint32_t address, shifted, pushed;
     uint8_t result_data;
     address = _pio->rxf[sm];
     pushed = _pio->rxf[sm];
+    lpc_cycle_count[sm]++;
+    lpc_last_address[sm] = address;
 
     if (lpc_handlers[sm].handler)
         lpc_handlers[sm].handler(address, &result_data);
+    if (sm == LPC_OP_MEM_READ)
+        lpc_note_odd(address, result_data, 0);
+    if (sm == LPC_OP_MEM_READ && lpc_trace_n < 48) {
+        lpc_trace_addr[lpc_trace_n] = address;
+        lpc_trace_data[lpc_trace_n] = result_data;
+        lpc_trace_n++;
+    }
 
     shifted = 0xF000;
     shifted |= (result_data << 4);
@@ -170,10 +203,16 @@ static void lpc_write_handler(uint8_t sm)
     uint8_t result_data;
     address = _pio->rxf[sm];
     result_data = (uint8_t)_pio->rxf[sm];
+    lpc_cycle_count[sm]++;
+    lpc_last_address[sm] = address;
     swaped_value = (result_data & 0xF) << 4;
     swaped_value |= result_data >> 4;
     result_data = (uint8_t)swaped_value;
 
+    if (sm == LPC_OP_MEM_WRITE)
+        lpc_note_odd(address, result_data, 1);
+    if (sm == LPC_OP_IO_WRITE)
+        lpc_iow_ring[lpc_iow_n++ % 16] = (address & 0xFFFF) << 8 | result_data;
     if (lpc_handlers[sm].handler)
         lpc_handlers[sm].handler(address, &result_data);
 

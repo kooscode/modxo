@@ -95,6 +95,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     superio
     flashrom
     lpc_mapper
+    oxos_debug
 )
 
 set(PICO_DEFAULT_BINARY_TYPE copy_to_ram)
