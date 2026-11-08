@@ -16,8 +16,8 @@
 //  0xFE and 0xFC are reserved: text with those bytes (binary output on COM1, e.g. a kernel debugger's packets) is
 //  ambiguous for the host.
 //
-// From the host: 0xFD 'P' presses the power button: OXOS_POWER_PIN high for 2 s (it drives an NPN transistor across
-// the Xbox's power switch), low otherwise. Other bytes are left for the emulated UART.
+// From the host: 0xFD 'P' presses the power button for 2 s: OXOS_POWER_PIN at OXOS_POWER_PRESSED (see below), at
+// OXOS_POWER_IDLE otherwise. Other bytes are left for the emulated UART.
 //
 // The stock UART and Super I/O answer only while the host holds DTR (tud_cdc_connected()); so does this module.
 #include <stdio.h>
@@ -31,6 +31,14 @@
 #ifndef OXOS_POWER_PIN
 #define OXOS_POWER_PIN 28 // the Tiny's SERIRQ pin; the SERIRQ module is not registered (src/main.c)
 #endif
+// How the pin presses the button. 0 (default): high presses (an NPN transistor across the switch), low otherwise.
+// 1: the pin is wired straight to the switch line (rp2040_zero_1_6 pinout: GPIO 6, free on a 1.6, which needs no
+// D0): high otherwise, low presses, as the switch pulls the line to ground.
+#ifndef OXOS_POWER_ACTIVE_LOW
+#define OXOS_POWER_ACTIVE_LOW 0
+#endif
+#define OXOS_POWER_IDLE (OXOS_POWER_ACTIVE_LOW ? 1 : 0)
+#define OXOS_POWER_PRESSED (OXOS_POWER_ACTIVE_LOW ? 0 : 1)
 #define OXOS_POWER_PRESS_MS 2000
 
 extern volatile uint32_t lpc_cycle_count[4];
@@ -74,7 +82,7 @@ static void post_read(uint16_t address, uint8_t *data)
 static bool oxos_tick(repeating_timer_t *t)
 {
     if (oxos_pressing && absolute_time_diff_us(get_absolute_time(), oxos_release) <= 0) {
-        gpio_put(OXOS_POWER_PIN, 0);
+        gpio_put(OXOS_POWER_PIN, OXOS_POWER_IDLE);
         oxos_pressing = false;
     }
     // First memory reads after each LPC reset: one 0xFC line per 4 reads once a line is free.
@@ -158,7 +166,7 @@ static bool oxos_tick(repeating_timer_t *t)
             uint8_t cmd[2];
             tud_cdc_read(cmd, 2);
             if (cmd[1] == 'P' && !oxos_pressing) {
-                gpio_put(OXOS_POWER_PIN, 1);
+                gpio_put(OXOS_POWER_PIN, OXOS_POWER_PRESSED);
                 oxos_release = make_timeout_time_ms(OXOS_POWER_PRESS_MS);
                 oxos_pressing = true;
             }
@@ -170,9 +178,12 @@ static bool oxos_tick(repeating_timer_t *t)
 static void oxos_debug_init(void)
 {
     gpio_init(OXOS_POWER_PIN);
-    gpio_put(OXOS_POWER_PIN, 0);
+    gpio_put(OXOS_POWER_PIN, OXOS_POWER_IDLE);
     gpio_set_dir(OXOS_POWER_PIN, GPIO_OUT);
-    gpio_pull_down(OXOS_POWER_PIN);
+    if (OXOS_POWER_ACTIVE_LOW)
+        gpio_pull_up(OXOS_POWER_PIN);
+    else
+        gpio_pull_down(OXOS_POWER_PIN);
     lpc_interface_add_io_handler(0x0080, 0xFFFF, post_read, post_write);
     add_repeating_timer_ms(20, oxos_tick, NULL, &oxos_timer);
 }
